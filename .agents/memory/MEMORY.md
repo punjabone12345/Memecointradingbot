@@ -1,0 +1,43 @@
+- [Pumpfun Module A vs Sniper Module B](pumpfun-vs-sniper.md) — two completely separate trading modules; never merge TP logic between them
+- [Pumpfun bonding curve scanner fixes](pumpfun-scanner-fixes.md) — dexId="pumpfun" (not "pump"), SOL/USDC pair address, graduation mcap, and discovered bugs
+- [On-chain bonding curve reader](onchain-bonding-curve.md) — pure-Node.js PDA derivation + getMultipleAccounts; no Solana SDK needed; confirmed working
+- [Real trading architecture](real-trading-arch.md) — Jupiter v6 + Solana web3.js swaps; @solana/web3.js externalized in esbuild; closePosition/partialClose/checkStagedSL all async
+- [Sniper trade verification](sniper-trade-verification.md) — entrySig/exitSig fields distinguish verified vs fake trades; purgeUnverifiedHistory() cleans old buggy data
+- [Critical sniper bugs fixed](sniper-critical-bugs.md) — isDuplicateTrade blocks ALL closes; trailingHigh=0 kills SL; entry price uses pre-buy price without Jupiter fallback
+- [Jupiter swap Custom:1 fix](jupiter-swap-fixes.md) — slippageBps+dynamicSlippage conflict, maxBps too low, priority fee too low; all fixed; Helius p75 fee estimation added
+- [Sniper entry pipeline latency fix](sniper-latency-fix.md) — extractMintFromTx delays (17s→5s) + post-buy price resolution moved to background; cuts 40s→~8s
+- [Sniper speed overhaul](sniper-speed-overhaul.md) — on-chain reserve ratio price replaces DexScreener for entry; cuts ~90s→~2.5s; Enhanced API removed (counterintuitively slower)
+- [DexScreener Raydium gate timing](dexscreener-raydium-gate.md) — 3-state check (raydium/non-raydium-only/none) with 60s window; pumpswap-only=block fast; no-pairs=keep retrying
+- [Graduation detection architecture](graduation-detection-architecture.md) — ONLY migration wallet sub (39azUY…); subs 2 & 3 removed; adding them back causes ~49 false grads per real one
+- [Old migration re-trading bugs](old-migration-trading-bugs.md) — backfill fires on boot (not just reconnect), no blockTime pre-filter, wrong vault extraction, one-sided drift guards; all fixed
+- [Strategy overhaul: quality filter + 4-stage TP](strategy-overhaul.md) — 60s parallel data collection, 4-dim scoring, 10s candle entry, SL-12%/TP1+100%/TP2+300%/TP3+600%/runner trailing; DB columns added
+- [PumpSwap ALT vault extraction bug](pumpswap-alt-vault-bug.md) — graduation TX is v0 versioned; vault accountIndex falls in ALT range; must merge loadedAddresses into accountKeys before indexing
+- [PumpSwap on-chain liquidity fix](pumpswap-liquidity-fix.md) — PumpSwap pools are keypair-based (NOT PDAs); use DexScreener pairAddress directly, not findProgramAddressSync; WSOL vault at byte offset 171
+- [Dip-retrace entry strategy](dip-retrace-strategy.md) — replaces immediate entry; quality gate passes → addToDipWatch → 30-min watch loop; entry triggers on 40–60% dump + 60% retrace
+- [Early Discovery Architecture](early-discovery-arch.md) — complete Early Demand Discovery system; critical route prefix gotcha; broadcast export pattern; scoring/TP/SL defaults
+- [ED token discovery sources](ed-discovery-sources.md) — GeckoTerminal new_pools is the working source; pumpportal WS + pump.fun APIs all blocked/dead in Replit; rugcheck single-holder must be skipped for <15min tokens
+- [ED rugcheck boolean bug](ed-rugcheck-boolean-bug.md) — passing rugcheckStatus===passed (boolean) to checkEntryConditions broke the guard; always pass the raw status string
+- [ED accountSubscribe pattern](ed-accountsubscribe.md) — Helius WS handles both logsNotification (id=1) and accountNotification; track reqId→mint then swap to subscriptionId on confirmation; clean up on token prune
+- [Meteora instruction type filter bug](meteora-instruction-filter.md) — naive first-"Instruction:"-in-logs extraction returns SPL Token "InitializeAccount", not Meteora op; must scan from Meteora programId invoke line
+- [Whale sniper architecture](whale-sniper-arch.md) — completely separate service from auto-trader; in-memory state only; buy detection via getSignaturesForAddress polling; setOnGraduation hook in trenches.service.ts
+- [Whale position live display](whale-position-live-display.md) — whale positions shown in Trades tab via whaleStatus prop; poll 2s, monitor 1.5s; Helius WS logsSubscribe per mint when key set
+- [Whale position management](whale-position-management.md) — full CRUD via /whale/:id + /whale/closed/:id routes; loadInitial must fetch whaleStatus or paper-mode positions never appear
+- [Edit tool $ substitution corruption](edit-tool-dollar-corruption.md) — new_string with $-then-quote/digit sequences gets JS-replace-interpreted, silently duplicating file content; verify after editing
+- [Helius RPC shared rate limiter](helius-shared-rate-limiter.md) — 3 services independently hit Helius, causing continuous 429s; centralized token-bucket + global cooldown fixes it
+- [Helius shared WS connection](helius-shared-ws-connection.md) — Helius allows only 1 concurrent WS; 3 services each opened their own → 429 reconnect storm; consolidated into one shared multiplexed connection
+- [Artifact-managed workflow port conflicts](artifact-workflow-port-conflicts.md) — this project has platform-managed "artifacts/*" workflows that duplicate custom .replit workflows and can't be deleted; conflicts must be resolved by removing/adjusting the custom side
+- [Whale sniper immediate activation](whale-sniper-immediate-activation.md) — skip DexScreener pool gate; activate trackedTokens instantly on graduation; enrich name/symbol async; polling starts within 2s
+- [Whale sniper Jupiter price formula](whale-sniper-jupiter-price.md) — price = (0.01 SOL × SOL_USD) / (outAmount / 1e6); never rely on swapUsdValue (zero for fresh tokens); SOL price from Jupiter Price API v2 not DexScreener
+- [Trenches poll Helius 429 / public RPC fallback](trenches-poll-rpc.md) — @solana/web3.js Connection.getSignaturesForAddress fails on Render with Helius 429; use direct fetch() + public RPC fallback; wrap in withHeliusLimit
+- [GMGN wallet_stats/wallet_activity real field shapes](gmgn-wallet-stats-field-names.md) — winrate/avg_holding_period nested under pnl_stat, buy/sell not buy_count/sell_count, some numerics are strings; wrong names silently zero every score
+- [Whale lifetime mint dedup](whale-lifetime-mint-dedup.md) — in-memory open-position tracking alone can't guarantee "never trade a mint twice"; needs DB-backed lifetime set checked at every pipeline entry point
+- [Whale entry price fix](whale-entry-price-fix.md) — DexScreener last-resort in fetchPriceFresh returned stale pre-pump price; fixed by extracting pool vaults from whale's tx and reading reserves directly
+- [Sniper entry checklist fields](sniper-entry-checklist.md) — entryMode/entryScore/qualifyingWalletsCount/priceSource/slippage only exist transiently during entry; persisted as columns on sniper_positions to power Telegram checklist + Stats filter-performance breakdowns
+- [Smart Wallet Consensus entry latency fix](sniper-consensus-entry-latency.md) — 30-40s→~3-4s: deferred blocking DexScreener enrichment, cut ENTRY_DELAY_MS, added priority lane to shared Helius RPC queue
+- [Migration-discovery blackout during Helius rate-limit episodes](trenches-cooldown-blackout.md) — scanner skipped entirely during Helius cooldown instead of using its public-RPC fallback, causing multi-minute dark periods + burst catch-up; also added WS zombie-connection watchdog
+- [GMGN Discovery Architecture](gmgn-discovery-arch.md) — quotation endpoints on gmgn.ai (NOT openapi.gmgn.ai); X-APIKEY bypasses Cloudflare; without key all polls fail; separate rate limiter from wallet scoring
+- [GMGN rate limit — global queue required](gmgn-rate-limit-threshold.md) — GMGN limits per IP not per key; per-key queues at 90s each = N×0.67 req/min total with N keys → bans; fix: single global queue so combined rate = 0.67 req/min regardless of key count
+- [Duplicate API server process on Replit](duplicate-api-server.md) — platform artifacts/api-server workflow runs a second node process; EADDRINUSE hits uncaughtException keeper instead of crashing; fix: await bindServer() before starting services so main() rejects and exits before sniper/GMGN start
+- [Market data batch refresh](market-batch-refresh.md) — serial 128-token loop (64s/cycle) replaced with DexScreener batch endpoint (30 mints/request, 5 batches × 300ms = ~2s); broadcast after each batch for incremental UI updates
+- [Discovery pipeline improvements](discovery-pipeline.md) — suppression model, validation timeout/age-cap, lifecycle columns, coverage endpoint
+- [Signal feed race condition & gmgnConfigured gate](signal-feed-race-condition.md) — baseline scan race with age-cap prune + frontend gate that hid entries; both fixed

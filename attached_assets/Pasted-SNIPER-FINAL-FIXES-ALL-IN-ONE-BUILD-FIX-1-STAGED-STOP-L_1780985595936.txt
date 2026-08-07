@@ -1,0 +1,157 @@
+SNIPER FINAL FIXES - ALL IN ONE BUILD
+
+FIX 1: STAGED STOP LOSS SYSTEM
+--------------------------------
+Replace current single -40% SL with
+staged system based on time and peak:
+
+First 2 minutes after entry:
+  Monitor every 10 seconds
+  If drops 20% from entry = exit immediately
+  (instant rug protection)
+
+2-10 minutes after entry:
+  Monitor every 10 seconds
+  If drops 25% from peak price = exit
+  (trailing from highest seen price)
+
+After 10 minutes:
+  Monitor every 10 seconds
+  If drops 30% from peak price = exit
+  (wider trail for established moves)
+
+After TP1 hit (+150%):
+  If drops 35% from TP1 peak = exit
+  (allows normal 20-30% shakeout 
+   before TP2 while protecting profits)
+  
+  Do NOT exit at 15% - too tight
+  Normal retracement before TP2 = 20-30%
+  35% gives room for this
+
+Key rule: always trail from PEAK price
+not from entry price at all times
+
+FIX 2: LIQUIDITY MONITORING
+-----------------------------
+Check on-chain liquidity every 30 seconds
+for all open sniper positions.
+
+If liquidity drops more than 40% in 
+any single 30 second window = 
+exit immediately at market price
+regardless of current price or SL level.
+
+Reason: liquidity drain = rug incoming
+This catches -90% dumps BEFORE 
+they appear in price feed.
+
+Priority fee on liquidity-triggered 
+exit: 0.003 SOL (highest priority)
+Must exit before other sellers.
+
+FIX 3: ATOMIC TP1 + SL UPDATE
+--------------------------------
+When TP1 executes:
+Sell 40% AND update SL must happen
+as single atomic operation.
+
+If SL update fails after TP1 sell =
+retry every 3 seconds until confirmed.
+Never leave position without updated
+SL after TP1 execution.
+
+FIX 4: DUPLICATE TRADE ON UPDATE BUG
+--------------------------------------
+Currently when app updates/redeploys,
+closed sniper trades are being re-logged
+causing double losses at same timestamp.
+
+Fix:
+Before logging any trade closure,
+check if a trade with same:
+- Token CA
+- Entry time (within 60 seconds)
+- Close reason
+already exists in trade history.
+
+If duplicate found = skip logging entirely.
+Never log same trade twice regardless
+of server restart or redeployment.
+
+Store closed trade signatures in 
+persistent file: closed_trades.json
+Check this file before every log write.
+This survives server restarts.
+
+FIX 5: PUMP.FUN BONDING CURVE TRADING
+----------------------------------------
+Current issue: showing "migration 
+successful" but not taking trades 
+before bonding curve completion.
+
+Fix:
+Monitor Pump.fun bonding curve tokens
+at 85% completion threshold (not 100%).
+
+Implementation:
+Poll Pump.fun API every 10 seconds:
+https://frontend-api.pump.fun/coins?limit=50&offset=0&sort=last_reply&order=DESC
+
+For each token check:
+bonding_curve_progress field
+
+If progress >= 85% AND < 100% = 
+trigger pre-migration entry:
+  Size: 0.05 SOL (smaller, higher risk)
+  Slippage: 20%
+  Priority fee: 0.002 SOL
+  Tag as: "PRE-GRAD"
+
+Entry validation before buy:
+- Not in blacklist
+- Token age under 30 minutes
+- At least 50 transactions
+- Not already holding this token
+
+SL/TP for pre-graduation trades:
+  Same staged SL system as above
+  TP1: +200% (higher target, more upside)
+  TP2: +500%
+  Runner: 20% trailing
+
+If token reaches 100% before our 
+entry executes = switch to normal
+graduation sniper entry instead.
+
+If bonding curve progress drops
+below 80% after entry = 
+exit immediately (failed graduation)
+
+FIX 6: TRADING HOURS
+----------------------
+ACTIVE: 6am - 11pm IST
+PAUSED: 11pm - 6am IST
+
+During pause:
+Keep WebSocket connected
+Keep detecting graduations
+Log detections but do NOT execute
+Resume automatically at 6am IST
+
+Applies to both sniper AND 
+pre-graduation trades.
+
+EXISTING THINGS - DO NOT CHANGE
+---------------------------------
+TP structure: TP1 +150% 40% out,
+              TP2 +400% 40% out,
+              Runner 20%
+Entry logic: unchanged
+WebSocket monitoring: unchanged
+CA blacklist: unchanged
+8 second stability check: unchanged
+Deduplication: unchanged
+
+Push everything to GitHub.
+Render will auto-deploy.
