@@ -276,10 +276,51 @@ export interface GmgnWalletActivityResponse {
   [key: string]: any;
 }
 
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * Public quotation endpoint fallback on gmgn.ai.
+ * Rationale: openapi.gmgn.ai requires an API key, whereas gmgn.ai's quotation endpoint
+ * works with a browser User-Agent via system curl without needing an API key.
+ * This guarantees wallet scoring works out-of-the-box for all tracked coins.
+ */
+async function fetchGmgnPublicStats(wallet: string, period = '30d'): Promise<GmgnWalletStats | null> {
+  const url = `https://gmgn.ai/defi/quotation/v1/smartmoney/sol/walletNew/${wallet}?period=${period}`;
+  const args = [
+    '-s',
+    '--max-time', '6',
+    url,
+    '-H', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    '-H', 'Referer: https://gmgn.ai/',
+    '-H', 'Accept: application/json',
+  ];
+  try {
+    const cmd = process.platform === 'win32' ? 'curl.exe' : 'curl';
+    const { stdout } = await execFileAsync(cmd, args);
+    if (!stdout) return null;
+    const json = JSON.parse(stdout);
+    if (json?.code === 0 && json?.data) {
+      return json.data as GmgnWalletStats;
+    }
+    return null;
+  } catch (err: any) {
+    logger.debug({ wallet: wallet.slice(0, 8), err: err?.message }, 'GMGN public stats curl fetch failed');
+    return null;
+  }
+}
+
 /** GET /v1/user/wallet_stats — win rate, pnl, buy/sell counts for a wallet over a period. */
 export async function getWalletStats(chain: string, wallet: string, period: '1d' | '7d' | '30d' = '30d'): Promise<GmgnWalletStats | null> {
-  const data = await existAuthGet<any>('/v1/user/wallet_stats', { chain, wallet_address: wallet, period });
-  // API can return either a single object or a single-element array for one wallet.
+  let data: any = null;
+  if (isGmgnConfigured()) {
+    data = await existAuthGet<any>('/v1/user/wallet_stats', { chain, wallet_address: wallet, period }).catch(() => null);
+  }
+  if (!data) {
+    data = await fetchGmgnPublicStats(wallet, period).catch(() => null);
+  }
   if (Array.isArray(data)) return data[0] ?? null;
   return data ?? null;
 }

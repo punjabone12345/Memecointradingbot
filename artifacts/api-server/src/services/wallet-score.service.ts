@@ -84,8 +84,6 @@ async function computeScore(wallet: string): Promise<WalletScoreBreakdown> {
     scoreSource: 'unavailable', scoreStatus: 'unavailable', computedAt: Date.now(),
   };
 
-  if (!isGmgnConfigured()) return zero;
-
   // Only skip entirely during a HARD ban (active 429 window).
   // During post-ban warmup, let the request proceed — reserveGmgnSlot will
   // delay it naturally until warmup clears, rather than blocking scoring
@@ -116,12 +114,7 @@ async function computeScore(wallet: string): Promise<WalletScoreBreakdown> {
     };
   }
 
-  // Only call getWalletStats (1 GMGN request per wallet instead of 2).
-  // getWalletActivity was previously used for wallet-age and hold-time estimation,
-  // but avg_holding_period is already in pnl_stat (from stats), so activity is
-  // redundant for hold-time scoring. Wallet-age scoring (15 pts) is dropped to
-  // keep the per-wallet GMGN cost at 1 request — halving the sustained rate and
-  // eliminating the bans that occurred at 3 req/min (2 reqs × 1.5 wallets/min).
+  // Fetch wallet stats from GMGN (uses API key if set, or falls back to public curl quotation endpoint).
   const stats = await getWalletStats(CHAIN, wallet, '30d').catch(() => null);
 
   if (!stats) {
@@ -132,26 +125,16 @@ async function computeScore(wallet: string): Promise<WalletScoreBreakdown> {
     return zero;
   }
 
-  // Win rate and avg holding period live under `pnl_stat` in the real API
-  // response, not top-level — reading `stats.winrate` directly always
-  // returned undefined, which is why every wallet used to score 0.
-  // GMGN inconsistently returns numeric stats as either JSON numbers or
-  // numeric strings (e.g. realized_profit_pnl comes back quoted while
-  // pnl_stat.winrate does not) — toNumber() coerces either shape.
-  const winRate = toNumber(stats?.pnl_stat?.winrate); // 0-1
-  // realized_profit_pnl (realized_profit / total_cost) is the closest available "average ROI" metric.
-  const realizedPnlRatio = toNumber(stats?.realized_profit_pnl);
-  const avgRoiPct = realizedPnlRatio !== null ? realizedPnlRatio * 100 : null;
-  const buyCount = toNumber(stats?.buy);
-  const sellCount = toNumber(stats?.sell);
-  // Use sell count as the primary "completed trades" proxy (each sell = 1 completed round-trip).
-  // Fall back to buy count if sells aren't reported, and finally to null.
+  // Parse fields gracefully whether returned top-level (public quotation API) or under pnl_stat (openapi)
+  const winRate = toNumber(stats?.winrate ?? stats?.pnl_stat?.winrate); // 0-1 ratio
+  const realizedPnlRatio = toNumber(stats?.realized_profit_pnl ?? stats?.pnl_30d ?? stats?.pnl ?? stats?.total_profit_pnl);
+  const avgRoiPct = realizedPnlRatio !== null ? (realizedPnlRatio > -10 && realizedPnlRatio < 100 ? realizedPnlRatio * 100 : realizedPnlRatio) : null;
+  const buyCount = toNumber(stats?.buy_30d ?? stats?.buy);
+  const sellCount = toNumber(stats?.sell_30d ?? stats?.sell);
   const completedTrades = sellCount ?? buyCount ?? null;
-  // GMGN reports avg holding period directly in pnl_stat (seconds).
-  const avgHoldingPeriodSec = toNumber(stats?.pnl_stat?.avg_holding_period);
+  const avgHoldingPeriodSec = toNumber(stats?.avg_holding_peroid ?? stats?.avg_holding_period ?? stats?.pnl_stat?.avg_holding_period);
   const avgHoldMinutes = avgHoldingPeriodSec !== null ? avgHoldingPeriodSec / 60 : null;
 
-  // walletAgeDays not computed (would require getWalletActivity — dropped to halve GMGN rate).
   const walletAgeDays: number | null = null;
 
   let score = 0;
@@ -168,7 +151,7 @@ async function computeScore(wallet: string): Promise<WalletScoreBreakdown> {
       score,
       winRate:   winRate?.toFixed(2) ?? 'null',
       winPts,
-       ageDays:   String(walletAgeDays ?? 'null'),
+      ageDays:   String(walletAgeDays ?? 'null'),
       agePts,
       trades:    completedTrades ?? 'null',
       tradePts,
@@ -183,7 +166,7 @@ async function computeScore(wallet: string): Promise<WalletScoreBreakdown> {
   return {
     wallet, score, winRate, avgRoiPct, completedTrades, walletAgeDays, avgHoldMinutes,
     scorePoints: { winRate: winPts, walletAge: agePts, completedTrades: tradePts, roi: roiPts, holdTime: holdPts },
-    scoreSource: 'gmgn',
+    scoreSource: isGmgnConfigured() ? 'gmgn' : 'gmgn_public',
     scoreStatus: 'scored',
     computedAt: Date.now(),
   };

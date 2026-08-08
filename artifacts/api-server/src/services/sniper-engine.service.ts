@@ -831,7 +831,21 @@ function detectBuy(tx: any, targetMint: string): BuyInfo | null {
     }
   }
 
-  const wallet = keys[0]?.pubkey?.toString() ?? keys[0]?.toString() ?? 'unknown';
+  // Identify the buyer's wallet address:
+  // Prefer recipient token account owner (the real buyer) before falling back to fee payer (keys[0])
+  let tokenRecipientOwner: string | null = null;
+  for (const post of postTok) {
+    if (post.mint !== targetMint) continue;
+    const pre     = preTok.find((p: any) => p.accountIndex === post.accountIndex && p.mint === targetMint);
+    const preRaw  = parseInt(pre?.uiTokenAmount?.amount ?? '0', 10);
+    const postRaw = parseInt(post.uiTokenAmount?.amount ?? '0', 10);
+    if (postRaw > preRaw && post.owner && post.owner !== feePayerAddr) {
+      tokenRecipientOwner = post.owner;
+      break;
+    }
+  }
+
+  const wallet = tokenRecipientOwner || feePayerAddr || 'unknown';
   return { wallet, solSpent: spent / 1e9, tokensReceived, poolBaseVault, poolQuoteVault };
 }
 
@@ -897,9 +911,22 @@ function detectSell(tx: any, targetMint: string): SellInfo | null {
     ? maxWsolDecrease / 1e9
     : (nativeSolGained > 0 ? nativeSolGained / 1e9 : 0);
 
-  if (solReceived < 0.001) return null; // filter dust/fee-only txns
+  if (solReceived < 0.0001) return null; // filter dust/fee-only txns
 
-  const wallet = feePayerAddr || 'unknown';
+  // Extract seller wallet address: prefer preTokenBalances seller account owner if available
+  let tokenSenderOwner: string | null = null;
+  for (const pre of preTok) {
+    if (pre.mint !== targetMint) continue;
+    const post    = postTok.find((p: any) => p.accountIndex === pre.accountIndex && p.mint === targetMint);
+    const preRaw  = parseInt(pre.uiTokenAmount?.amount ?? '0', 10);
+    const postRaw = parseInt(post?.uiTokenAmount?.amount ?? '0', 10);
+    if (preRaw > postRaw && pre.owner && pre.owner !== poolBaseVault) {
+      tokenSenderOwner = pre.owner;
+      break;
+    }
+  }
+
+  const wallet = tokenSenderOwner || feePayerAddr || 'unknown';
   return { wallet, solReceived, poolBaseVault, poolQuoteVault };
 }
 

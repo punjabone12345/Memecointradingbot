@@ -781,8 +781,8 @@ export default function DiscoverPage({ sniperStatus: wsProp, wsConnected = false
           Every buyer on a tracked token is scored via GMGN — entry fires only on Consensus: two+ wallets ≥80 within 5 min (Tier 2 · 1% risk · price &lt; $0.001)
         </div>
         {!gmgnConfigured && (
-          <div style={{ fontSize: 10, color: C.red, padding: '6px 10px', marginBottom: 8, borderRadius: 6, background: 'rgba(255,68,68,0.08)', border: '1px solid rgba(255,68,68,0.2)' }}>
-            ⚠️ GMGN_API_KEY not set — wallet scores will be 0; entries won't trigger until the key is added
+          <div style={{ fontSize: 10, color: C.accent, padding: '6px 10px', marginBottom: 8, borderRadius: 6, background: 'rgba(0,191,255,0.08)', border: '1px solid rgba(0,191,255,0.2)' }}>
+            ℹ️ Running on GMGN public quotation API (add GMGN_API_KEY for higher throughput limits)
           </div>
         )}
         {gmgnBannedUntil > 0 && (
