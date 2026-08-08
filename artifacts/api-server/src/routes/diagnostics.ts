@@ -11,6 +11,7 @@ import {
   getDiagErrors,
   getDiagFunnelStats,
   getDiagCoverageStats,
+  getDiagTransactions,
 } from '../lib/diagnostics.js';
 import { getTrenchesDiagnostics } from '../services/trenches.service.js';
 
@@ -29,6 +30,20 @@ router.get('/tokens', async (req, res) => {
     const since  = req.query.since  ? parseInt(req.query.since  as string, 10) : undefined;
     const result = await getDiagTokens({ status, limit, offset, since });
     res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'Internal error' });
+  }
+});
+
+/** GET /api/diagnostics/transactions — durable per-transaction GMGN audit log. */
+router.get('/transactions', async (req, res) => {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 100;
+    const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : 0;
+    const since = req.query.since ? parseInt(req.query.since as string, 10) : undefined;
+    const mint = typeof req.query.mint === 'string' ? req.query.mint : undefined;
+    const txType = typeof req.query.txType === 'string' ? req.query.txType : undefined;
+    res.json(await getDiagTransactions({ limit, offset, since, mint, txType }));
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? 'Internal error' });
   }

@@ -1,4 +1,4 @@
-import { Settings, SniperStatus, SniperPosition, ClosedSniperPosition, DiagToken, DiagError, DiagFunnelStats, DiagDailySummary } from './types.js';
+import { Settings, SniperStatus, SniperPosition, ClosedSniperPosition, DiagToken, DiagError, DiagFunnelStats, DiagDailySummary, DiagTransaction } from './types.js';
 
 // In dev mode always use the Vite proxy (/api → localhost:8080) so local
 // changes are visible immediately, regardless of VITE_API_URL.
@@ -76,6 +76,16 @@ export const api = {
     if (opts?.errorType)         params.set('errorType', opts.errorType);
     const qs = params.toString();
     return apiFetch<{ rows: DiagError[] }>(`/diagnostics/errors${qs ? '?' + qs : ''}`);
+  },
+  getDiagTransactions: (opts?: { limit?: number; offset?: number; mint?: string; txType?: string; since?: number }) => {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set('limit', String(opts.limit));
+    if (opts?.offset != null) params.set('offset', String(opts.offset));
+    if (opts?.mint) params.set('mint', opts.mint);
+    if (opts?.txType) params.set('txType', opts.txType);
+    if (opts?.since != null) params.set('since', String(opts.since));
+    const qs = params.toString();
+    return apiFetch<{ rows: DiagTransaction[]; total: number }>(`/diagnostics/transactions${qs ? '?' + qs : ''}`);
   },
   getDiagFunnel: (opts?: { since?: number }) => {
     const params = new URLSearchParams();

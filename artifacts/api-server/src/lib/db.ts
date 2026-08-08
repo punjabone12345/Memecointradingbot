@@ -173,33 +173,33 @@ export async function initDB(): Promise<void> {
   //    in older production databases (Render, etc.) ──────────────────
   const migrations = [
     // positions table
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS mint         TEXT         NOT NULL DEFAULT ''`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS name         TEXT         NOT NULL DEFAULT ''`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS symbol       TEXT         NOT NULL DEFAULT '???'`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS entry_price  NUMERIC      NOT NULL DEFAULT 0`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS entry_mc     NUMERIC      NOT NULL DEFAULT 0`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS entry_time   TIMESTAMPTZ  NOT NULL DEFAULT NOW()`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS exit_price   NUMERIC`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS exit_mc      NUMERIC`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS exit_time    TIMESTAMPTZ`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS size_sol     NUMERIC      NOT NULL DEFAULT 0`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS pnl_sol      NUMERIC`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS pnl_pct      NUMERIC`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS score_at_entry INTEGER    NOT NULL DEFAULT 0`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS peak_price   NUMERIC      NOT NULL DEFAULT 0`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS sl_current   NUMERIC      NOT NULL DEFAULT 0`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS tp1_hit      BOOLEAN       DEFAULT FALSE`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS tp2_hit      BOOLEAN       DEFAULT FALSE`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS tp3_hit      BOOLEAN       DEFAULT FALSE`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS close_reason TEXT`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS status       TEXT         NOT NULL DEFAULT 'OPEN'`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS mode         TEXT         NOT NULL DEFAULT 'paper'`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS tx_signature TEXT`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS dex_url      TEXT`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS notes              TEXT`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS created_at         TIMESTAMPTZ   DEFAULT NOW()`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS initial_size_sol   NUMERIC`,
-    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS banked_profit_sol  NUMERIC       DEFAULT 0`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS mint         TEXT         NOT NULL DEFAULT ''`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS name         TEXT         NOT NULL DEFAULT ''`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS symbol       TEXT         NOT NULL DEFAULT '???'`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS entry_price  NUMERIC      NOT NULL DEFAULT 0`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS entry_mc      NUMERIC      NOT NULL DEFAULT 0`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS entry_time    TIMESTAMPTZ  NOT NULL DEFAULT NOW()`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS exit_price    NUMERIC`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS exit_mc       NUMERIC`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS exit_time     TIMESTAMPTZ`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS size_sol      NUMERIC      NOT NULL DEFAULT 0`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS pnl_sol       NUMERIC`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS pnl_pct       NUMERIC`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS score_at_entry INTEGER    NOT NULL DEFAULT 0`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS peak_price    NUMERIC      NOT NULL DEFAULT 0`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS sl_current    NUMERIC      NOT NULL DEFAULT 0`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS tp1_hit       BOOLEAN       DEFAULT FALSE`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS tp2_hit       BOOLEAN       DEFAULT FALSE`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS tp3_hit       BOOLEAN       DEFAULT FALSE`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS close_reason  TEXT`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS status        TEXT         NOT NULL DEFAULT 'OPEN'`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS mode          TEXT         NOT NULL DEFAULT 'paper'`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS tx_signature  TEXT`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS dex_url       TEXT`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS notes         TEXT`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS created_at    TIMESTAMPTZ   DEFAULT NOW()`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS initial_size_sol NUMERIC`,
+    `ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS banked_profit_sol NUMERIC DEFAULT 0`,
     // ── Legacy schema heal (whitelist approach) ──────────────────────────────
     // Drop NOT NULL from ANY column not in our known required set.
     // This catches 'position_id' (and any other legacy columns) regardless of
@@ -237,36 +237,36 @@ export async function initDB(): Promise<void> {
     // Source labels: comma-separated list of discovery sources ('bot', 'trenches', 'pumpfun')
     `ALTER TABLE positions ADD COLUMN IF NOT EXISTS sources TEXT DEFAULT '[]'`,
     // sniper_positions TP tier columns (multi-stage exits)
-    `ALTER TABLE sniper_positions ADD COLUMN IF NOT EXISTS tp1_hit BOOLEAN DEFAULT FALSE`,
-    `ALTER TABLE sniper_positions ADD COLUMN IF NOT EXISTS tp2_hit BOOLEAN DEFAULT FALSE`,
-    `ALTER TABLE sniper_positions ADD COLUMN IF NOT EXISTS tp3_hit BOOLEAN DEFAULT FALSE`,
-    `ALTER TABLE sniper_positions ADD COLUMN IF NOT EXISTS initial_size_sol NUMERIC DEFAULT 0`,
-    `ALTER TABLE sniper_positions ADD COLUMN IF NOT EXISTS remaining_size_sol NUMERIC DEFAULT 0`,
-    `ALTER TABLE sniper_positions ADD COLUMN IF NOT EXISTS banked_sol NUMERIC DEFAULT 0`,
-    `ALTER TABLE sniper_positions ADD COLUMN IF NOT EXISTS tp_tier INTEGER DEFAULT 1`,
-    `ALTER TABLE sniper_positions ADD COLUMN IF NOT EXISTS trigger_amount_usd NUMERIC DEFAULT 0`,
-    `ALTER TABLE sniper_positions ADD COLUMN IF NOT EXISTS current_sl_price NUMERIC DEFAULT 0`,
+    `ALTER TABLE IF EXISTS sniper_positions ADD COLUMN IF NOT EXISTS tp1_hit BOOLEAN DEFAULT FALSE`,
+    `ALTER TABLE IF EXISTS sniper_positions ADD COLUMN IF NOT EXISTS tp2_hit BOOLEAN DEFAULT FALSE`,
+    `ALTER TABLE IF EXISTS sniper_positions ADD COLUMN IF NOT EXISTS tp3_hit BOOLEAN DEFAULT FALSE`,
+    `ALTER TABLE IF EXISTS sniper_positions ADD COLUMN IF NOT EXISTS initial_size_sol NUMERIC DEFAULT 0`,
+    `ALTER TABLE IF EXISTS sniper_positions ADD COLUMN IF NOT EXISTS remaining_size_sol NUMERIC DEFAULT 0`,
+    `ALTER TABLE IF EXISTS sniper_positions ADD COLUMN IF NOT EXISTS banked_sol NUMERIC DEFAULT 0`,
+    `ALTER TABLE IF EXISTS sniper_positions ADD COLUMN IF NOT EXISTS tp_tier INTEGER DEFAULT 1`,
+    `ALTER TABLE IF EXISTS sniper_positions ADD COLUMN IF NOT EXISTS trigger_amount_usd NUMERIC DEFAULT 0`,
+    `ALTER TABLE IF EXISTS sniper_positions ADD COLUMN IF NOT EXISTS current_sl_price NUMERIC DEFAULT 0`,
     // Entry checklist columns — capture WHICH filters/conditions fired at entry so
     // closed trades can be sliced by entry mode/score/price-source/slippage later.
-    `ALTER TABLE sniper_positions ADD COLUMN IF NOT EXISTS entry_mode TEXT`,
-    `ALTER TABLE sniper_positions ADD COLUMN IF NOT EXISTS entry_score NUMERIC`,
-    `ALTER TABLE sniper_positions ADD COLUMN IF NOT EXISTS qualifying_wallets_count INTEGER`,
-    `ALTER TABLE sniper_positions ADD COLUMN IF NOT EXISTS buyer_wallet TEXT`,
-    `ALTER TABLE sniper_positions ADD COLUMN IF NOT EXISTS price_source TEXT`,
-    `ALTER TABLE sniper_positions ADD COLUMN IF NOT EXISTS price_at_detection NUMERIC`,
-    `ALTER TABLE sniper_positions ADD COLUMN IF NOT EXISTS actual_slippage_pct NUMERIC`,
-    `ALTER TABLE sniper_positions ADD COLUMN IF NOT EXISTS max_slippage_pct NUMERIC`,
+    `ALTER TABLE IF EXISTS sniper_positions ADD COLUMN IF NOT EXISTS entry_mode TEXT`,
+    `ALTER TABLE IF EXISTS sniper_positions ADD COLUMN IF NOT EXISTS entry_score NUMERIC`,
+    `ALTER TABLE IF EXISTS sniper_positions ADD COLUMN IF NOT EXISTS qualifying_wallets_count INTEGER`,
+    `ALTER TABLE IF EXISTS sniper_positions ADD COLUMN IF NOT EXISTS buyer_wallet TEXT`,
+    `ALTER TABLE IF EXISTS sniper_positions ADD COLUMN IF NOT EXISTS price_source TEXT`,
+    `ALTER TABLE IF EXISTS sniper_positions ADD COLUMN IF NOT EXISTS price_at_detection NUMERIC`,
+    `ALTER TABLE IF EXISTS sniper_positions ADD COLUMN IF NOT EXISTS actual_slippage_pct NUMERIC`,
+    `ALTER TABLE IF EXISTS sniper_positions ADD COLUMN IF NOT EXISTS max_slippage_pct NUMERIC`,
     // Ensure sniperStagnationPct seed exists (no-op if already set by user)
     `INSERT INTO settings (key, value) VALUES ('sniperStagnationPct', '5') ON CONFLICT (key) DO NOTHING`,
     // ── Discovery pipeline lifecycle columns (diag_tokens) ─────────────────
     // Track when each key milestone was first reached during validation.
     // COALESCE in write queries preserves the first-ever value across rediscoveries.
-    `ALTER TABLE diag_tokens ADD COLUMN IF NOT EXISTS first_dexscreener_pair_at BIGINT`,
-    `ALTER TABLE diag_tokens ADD COLUMN IF NOT EXISTS first_nonzero_liq_at      BIGINT`,
-    `ALTER TABLE diag_tokens ADD COLUMN IF NOT EXISTS liq_min_crossed_at        BIGINT`,
-    `ALTER TABLE diag_tokens ADD COLUMN IF NOT EXISTS validation_outcome         TEXT`,
-    `ALTER TABLE diag_tokens ADD COLUMN IF NOT EXISTS rediscovery_count         INTEGER NOT NULL DEFAULT 0`,
-    `ALTER TABLE diag_tokens ADD COLUMN IF NOT EXISTS initial_reserve_usd       NUMERIC`,
+    `ALTER TABLE IF EXISTS diag_tokens ADD COLUMN IF NOT EXISTS first_dexscreener_pair_at BIGINT`,
+    `ALTER TABLE IF EXISTS diag_tokens ADD COLUMN IF NOT EXISTS first_nonzero_liq_at      BIGINT`,
+    `ALTER TABLE IF EXISTS diag_tokens ADD COLUMN IF NOT EXISTS liq_min_crossed_at        BIGINT`,
+    `ALTER TABLE IF EXISTS diag_tokens ADD COLUMN IF NOT EXISTS validation_outcome         TEXT`,
+    `ALTER TABLE IF EXISTS diag_tokens ADD COLUMN IF NOT EXISTS rediscovery_count         INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE IF EXISTS diag_tokens ADD COLUMN IF NOT EXISTS initial_reserve_usd       NUMERIC`,
   ];
 
   for (const sql of migrations) {
@@ -598,6 +598,38 @@ export async function initDB(): Promise<void> {
   `);
   await query(`CREATE INDEX IF NOT EXISTS idx_diag_errors_occurred_at ON diag_errors (occurred_at DESC)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_diag_errors_type        ON diag_errors (error_type)`);
+
+  // One durable audit row per detected on-chain transaction. Unlike the
+  // per-token funnel, this preserves the wallet, signature, GMGN score
+  // calculation, and exact decision for every buy and sell.
+  await query(`
+    CREATE TABLE IF NOT EXISTS diag_transactions (
+      tx_signature       TEXT PRIMARY KEY,
+      mint               TEXT NOT NULL,
+      tx_type            TEXT NOT NULL,
+      wallet             TEXT NOT NULL,
+      amount_usd         NUMERIC DEFAULT 0,
+      tx_timestamp       BIGINT NOT NULL,
+      detected_at        BIGINT NOT NULL,
+      price_at_detection NUMERIC DEFAULT 0,
+      decision            TEXT NOT NULL,
+      decision_reason    TEXT NOT NULL DEFAULT '',
+      wallet_score       NUMERIC DEFAULT 0,
+      win_rate           NUMERIC,
+      avg_roi_pct        NUMERIC,
+      completed_trades   INTEGER,
+      wallet_age_days    NUMERIC,
+      avg_hold_minutes   NUMERIC,
+      score_points       JSONB NOT NULL DEFAULT '{}'::jsonb,
+      score_source       TEXT NOT NULL DEFAULT 'unavailable',
+      score_status       TEXT NOT NULL DEFAULT 'unavailable',
+      consensus_mode     TEXT,
+      qualifying_wallets INTEGER DEFAULT 0,
+      created_at         BIGINT NOT NULL
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_diag_transactions_created_at ON diag_transactions (created_at DESC)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_diag_transactions_mint ON diag_transactions (mint, created_at DESC)`);
 
   logger.info('Database initialized');
 }

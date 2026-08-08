@@ -8,11 +8,12 @@ import { query } from '../lib/db.js';
 import { withHeliusLimit, isHeliusCoolingDown } from '../lib/helius-limiter.js';
 import { subscribeLogs, isHeliusWsConfigured } from '../lib/helius-ws-shared.js';
 import { evaluateBuy, clearMintConsensus, resetConsensusState, ConsensusResult } from './wallet-consensus.service.js';
-import { isWalletScoreCached } from './wallet-score.service.js';
+import { getWalletScore, isWalletScoreCached, WalletScoreBreakdown } from './wallet-score.service.js';
 import { isGmgnConfigured, getGmgnBannedUntil } from '../lib/gmgn-client.js';
 import {
   diagTokenDiscovered, diagTokenScanned, diagTokenRejected,
   diagTokenTraded, diagTokenExpired, diagTechError,
+  diagTransactionAudited,
   diagTokenValidationMilestone, diagTokenReleased,
 } from '../lib/diagnostics.js';
 import { releaseForRediscovery } from './trenches.service.js';
@@ -182,6 +183,7 @@ export interface BuyerActivityLog {
   timestamp: number;   // on-chain blockTime ms — used for consensus window
   detectedAt: number;  // Date.now() when the bot processed the tx — use for display
   txSig: string;
+  txType?: 'buy' | 'sell';
   entered: boolean;
   skipReason?: string;
   priceAtDetection?: number;
@@ -191,8 +193,9 @@ export interface BuyerActivityLog {
   // under — surfaced in the UI so the Smart Wallet Consensus entry model is
   // visible everywhere trades happen, not just buried in skipReason text.
   walletScore?: number;
-  consensusMode?: 'solo' | 'consensus' | 'tracking' | 'none';
+  consensusMode?: 'solo' | 'consensus' | 'tracking' | 'none' | 'ban_queued';
   qualifyingWalletsCount?: number;
+  gmgnScore?: WalletScoreBreakdown;
 }
 
 interface PendingSignal {
@@ -1449,7 +1452,57 @@ async function handleVolumeUpdate(
     tok.buyerActivity.push({ wallet, amountUsd: txUsd, timestamp: txTimestamp, detectedAt, txSig, priceAtDetection });
   }
 
-  if (txType !== 'buy') return; // sells never trigger entries under Smart Wallet Consensus
+  // Score every transaction through GMGN. Sells are observational only, but
+  // they still get the same wallet-quality audit as buys.
+  let scoreResult: WalletScoreBreakdown;
+  try {
+    scoreResult = await getWalletScore(wallet);
+  } catch {
+    scoreResult = {
+      wallet, score: 0, winRate: null, avgRoiPct: null, completedTrades: null,
+      walletAgeDays: null, avgHoldMinutes: null,
+      scorePoints: { winRate: 0, walletAge: 0, completedTrades: 0, roi: 0, holdTime: 0 },
+      scoreSource: 'unavailable', scoreStatus: 'unavailable', computedAt: Date.now(),
+    };
+  }
+
+  const persistAudit = (decision: string, decisionReason: string, mode?: string, qualifyingWallets = 0): void => {
+    void diagTransactionAudited({
+      txSignature: txSig,
+      mint,
+      txType,
+      wallet,
+      amountUsd: txUsd,
+      txTimestamp,
+      detectedAt,
+      priceAtDetection,
+      decision,
+      decisionReason,
+      score: scoreResult,
+      consensusMode: mode,
+      qualifyingWallets,
+    }).catch(() => {});
+  };
+
+  if (txType !== 'buy') {
+    const sellEntry: BuyerActivityLog = {
+      mint, name: tok.name, symbol: tok.symbol,
+      wallet, amountUsd: txUsd, timestamp: txTimestamp, detectedAt, txSig,
+      txType: 'sell',
+      entered: false,
+      priceAtDetection,
+      walletScore: scoreResult.score,
+      consensusMode: 'none',
+      qualifyingWalletsCount: 0,
+      gmgnScore: scoreResult,
+      skipReason: 'Sell observed — scored by GMGN, never used as an entry trigger',
+    };
+    buyLog.unshift(sellEntry);
+    if (buyLog.length > MAX_BUY_LOG) buyLog.pop();
+    persistAudit('SELL_OBSERVED', sellEntry.skipReason ?? 'Sell observed', 'none');
+    broadcastSniperStatus();
+    return; // sells never trigger entries under Smart Wallet Consensus
+  }
 
   // ── Trading window gate ───────────────────────────────────────────────────
   // Build a partial entry now so we can push to buyLog BEFORE bailing —
@@ -1466,10 +1519,13 @@ async function handleVolumeUpdate(
     const entry: BuyerActivityLog = {
       mint, name: tok.name, symbol: tok.symbol,
       wallet, amountUsd: txUsd, timestamp: txTimestamp, detectedAt, txSig,
+      txType: 'buy',
       entered: false, priceAtDetection,
-      walletScore: 0, consensusMode: 'none', qualifyingWalletsCount: 0,
+      walletScore: scoreResult.score, consensusMode: 'none', qualifyingWalletsCount: 0,
+      gmgnScore: scoreResult,
       skipReason: 'Settings unavailable — entry blocked',
     };
+    persistAudit('REJECTED', 'Settings unavailable — entry blocked', 'none');
     buyLog.unshift(entry);
     if (buyLog.length > MAX_BUY_LOG) buyLog.pop();
     broadcastSniperStatus();
@@ -1480,10 +1536,13 @@ async function handleVolumeUpdate(
     const entry: BuyerActivityLog = {
       mint, name: tok.name, symbol: tok.symbol,
       wallet, amountUsd: txUsd, timestamp: txTimestamp, detectedAt, txSig,
+      txType: 'buy',
       entered: false, priceAtDetection,
-      walletScore: 0, consensusMode: 'none', qualifyingWalletsCount: 0,
+      walletScore: scoreResult.score, consensusMode: 'none', qualifyingWalletsCount: 0,
+      gmgnScore: scoreResult,
       skipReason: 'Outside trading window',
     };
+    persistAudit('REJECTED', 'Outside trading window', 'none');
     buyLog.unshift(entry);
     if (buyLog.length > MAX_BUY_LOG) buyLog.pop();
     broadcastSniperStatus();
@@ -1495,7 +1554,7 @@ async function handleVolumeUpdate(
   // mint's poll/WS callback fires independently (`void pollTokenBuys(mint)`).
   let result: ConsensusResult;
   try {
-    result = await evaluateBuy(mint, wallet, txTimestamp);
+    result = await evaluateBuy(mint, wallet, txTimestamp, scoreResult);
   } catch (err: any) {
     // getWalletScore/evaluateBuy are designed to never throw (they fail safe
     // to a 0 score), so reaching this catch means something unexpected broke.
@@ -1503,15 +1562,18 @@ async function handleVolumeUpdate(
     // making GMGN failures invisible in production logs.
     logger.warn({ mint: mint.slice(0, 12), err: err?.message }, 'Sniper engine: consensus evaluation failed — skipping buy');
     void diagTechError('CONSENSUS_EVAL_FAILED', err?.message ?? 'unknown error', mint.slice(0, 12)).catch(() => {});
+    persistAudit('REJECTED', `Consensus evaluation failed: ${err?.message ?? 'unknown error'}`, 'none');
     return;
   }
 
   const entry: BuyerActivityLog = {
     mint, name: tok.name, symbol: tok.symbol,
     wallet, amountUsd: txUsd, timestamp: txTimestamp, detectedAt, txSig,
+      txType: 'buy',
     entered: false, priceAtDetection,
     walletScore: result.score, consensusMode: result.mode,
     qualifyingWalletsCount: result.qualifyingWallets.length,
+      gmgnScore: result.scoreBreakdown,
   };
 
   // ── Diagnostic: record every evaluated buy (fire-and-forget) ─────────────
@@ -1534,6 +1596,7 @@ async function handleVolumeUpdate(
       // GMGN is rate-banned — park this buy and replay it once the ban lifts.
       banReplayQueue.push({ mint, wallet, txUsd, txSig, priceAtDetection, txTimestamp, queuedAt: Date.now() });
       entry.skipReason = 'GMGN rate-limited — queued for re-scoring when ban lifts (no buy skipped)';
+      persistAudit('GMGN_RATE_LIMITED', entry.skipReason, result.mode, result.qualifyingWallets.length);
     } else {
       // Every evaluated buyer is logged for visibility, even scores below the
       // consensus threshold — the Smart Wallet Signal Feed is meant to show the
@@ -1541,6 +1604,7 @@ async function handleVolumeUpdate(
       entry.skipReason = result.mode === 'tracking'
         ? `Wallet score ${result.score} qualifies (>=80) — waiting for a 2nd qualifying wallet within 5 min (${result.qualifyingWallets.length}/2)`
         : `Wallet score ${result.score} below consensus threshold (80)`;
+      persistAudit(result.mode === 'tracking' ? 'WAITING_CONSENSUS' : 'REJECTED', entry.skipReason, result.mode, result.qualifyingWallets.length);
     }
     buyLog.unshift(entry);
     if (buyLog.length > MAX_BUY_LOG) buyLog.pop();
@@ -1554,6 +1618,7 @@ async function handleVolumeUpdate(
       : entryLocks.has(mint)
       ? 'Entry already in progress for this token'
       : 'Already traded this token (lifetime — never re-entered)';
+    persistAudit('REJECTED', entry.skipReason, result.mode, result.qualifyingWallets.length);
     buyLog.unshift(entry);
     if (buyLog.length > MAX_BUY_LOG) buyLog.pop();
     broadcastSniperStatus();
@@ -1610,6 +1675,7 @@ async function handleVolumeUpdate(
   if (liqAtSignal < 25_000) {
     entry.skipReason = `Low liquidity ${liqAtSignal.toFixed(0)} < $25,000 min`;
     void diagTokenRejected(mint, `Liquidity: ${liqAtSignal.toFixed(0)} < $25,000 min`).catch(() => {});
+    persistAudit('REJECTED', entry.skipReason, result.mode, result.qualifyingWallets.length);
     buyLog.unshift(entry); if (buyLog.length > MAX_BUY_LOG) buyLog.pop();
     broadcastSniperStatus(); return;
   }
@@ -1628,6 +1694,7 @@ async function handleVolumeUpdate(
   if (ageMinutes < 10) {
     entry.skipReason = `Token too new — ${ageMinutes.toFixed(1)} min old (min 10 min)`;
     void diagTokenRejected(mint, `Too new: ${ageMinutes.toFixed(1)} min old (min 10 min)`).catch(() => {});
+    persistAudit('REJECTED', entry.skipReason, result.mode, result.qualifyingWallets.length);
     buyLog.unshift(entry); if (buyLog.length > MAX_BUY_LOG) buyLog.pop();
     broadcastSniperStatus(); return;
   }
@@ -1637,6 +1704,7 @@ async function handleVolumeUpdate(
   if (freezable) {
     entry.skipReason = 'Freeze authority present — token is freezable, skipped';
     void diagTokenRejected(mint, 'Freeze authority present').catch(() => {});
+    persistAudit('REJECTED', entry.skipReason, result.mode, result.qualifyingWallets.length);
     buyLog.unshift(entry); if (buyLog.length > MAX_BUY_LOG) buyLog.pop();
     broadcastSniperStatus(); return;
   }
@@ -1645,6 +1713,7 @@ async function handleVolumeUpdate(
   if (priceAtDetection > 0 && priceAtDetection >= 0.001) {
     entry.skipReason = `Price $${priceAtDetection.toFixed(6)} >= $0.001 — entry skipped (price filter)`;
     void diagTokenRejected(mint, `Price ${priceAtDetection.toFixed(6)} >= $0.001`).catch(() => {});
+    persistAudit('REJECTED', entry.skipReason, result.mode, result.qualifyingWallets.length);
     buyLog.unshift(entry); if (buyLog.length > MAX_BUY_LOG) buyLog.pop();
     broadcastSniperStatus(); return;
   }
@@ -1663,6 +1732,7 @@ async function handleVolumeUpdate(
       result.mode as 'solo' | 'consensus', result.score, result.qualifyingWallets.length, maxSlippageForQueue,
       result.qualifyingWallets,
     );
+    persistAudit('QUEUED', entry.skipReason, result.mode, result.qualifyingWallets.length);
     buyLog.unshift(entry);
     if (buyLog.length > MAX_BUY_LOG) buyLog.pop();
     broadcastSniperStatus();
@@ -1673,6 +1743,7 @@ async function handleVolumeUpdate(
   entry.skipReason = modeLabel;
   buyLog.unshift(entry);
   if (buyLog.length > MAX_BUY_LOG) buyLog.pop();
+  persistAudit('ENTERED', modeLabel, result.mode, result.qualifyingWallets.length);
   broadcastSniperStatus();
   await enterSniperPosition(
     mint, tok.name, tok.symbol, result.sizePct, txUsd, priceAtDetection, wallet, txTimestamp, result.tpTier,
@@ -2619,7 +2690,7 @@ export function addGraduatedToken(ev: { mint: string; poolAddress?: string; ts: 
     detectedAt,
     migrationTime,
   });
-  void diagTokenDiscovered(ev.mint, 'gmgn', { name: ev.name, symbol: ev.symbol, initialLiquidity: ev.reserveUsd }).catch(() => {});
+  void diagTokenDiscovered(ev.mint, 'gmgn', { initialLiquidity: ev.reserveUsd }).catch(() => {});
 
   logger.info(
     { mint: ev.mint.slice(0, 16), pool: ev.poolAddress?.slice(0, 16) },

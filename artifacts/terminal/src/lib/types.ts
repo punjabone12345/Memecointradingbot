@@ -115,14 +115,33 @@ export interface BuyerActivityLog {
   timestamp: number;   // on-chain blockTime ms — used for consensus window logic
   detectedAt: number;  // Date.now() when the bot processed the tx — use for display
   txSig: string;
+  txType?: 'buy' | 'sell';
   entered: boolean;
   skipReason?: string;
   priceAtDetection?: number;
   entryPrice?: number;
   slippagePct?: number;
   walletScore?: number;
-  consensusMode?: 'solo' | 'consensus' | 'tracking' | 'none';
+  consensusMode?: 'solo' | 'consensus' | 'tracking' | 'none' | 'ban_queued';
   qualifyingWalletsCount?: number;
+  gmgnScore?: {
+    wallet: string;
+    score: number;
+    winRate: number | null;
+    avgRoiPct: number | null;
+    completedTrades: number | null;
+    walletAgeDays: number | null;
+    avgHoldMinutes: number | null;
+    scorePoints: {
+      winRate: number;
+      walletAge: number;
+      completedTrades: number;
+      roi: number;
+      holdTime: number;
+    };
+    scoreSource: string;
+    scoreStatus: string;
+  };
 }
 
 export interface PendingSignal {
@@ -229,6 +248,38 @@ export interface DiagDailySummary {
   total_tracked: string;
   rejectionBreakdown: { reject_reason: string; count: string }[];
   errorSummary: { error_type: string; count: string }[];
+}
+
+export interface DiagTransaction {
+  tx_signature: string;
+  mint: string;
+  tx_type: 'buy' | 'sell';
+  wallet: string;
+  amount_usd: number | string;
+  tx_timestamp: number | string;
+  detected_at: number | string;
+  price_at_detection: number | string;
+  decision: string;
+  decision_reason: string;
+  wallet_score: number | string;
+  win_rate: number | string | null;
+  avg_roi_pct: number | string | null;
+  completed_trades: number | string | null;
+  wallet_age_days: number | string | null;
+  avg_hold_minutes: number | string | null;
+  score_points: {
+    winRate?: number;
+    walletAge?: number;
+    completedTrades?: number;
+    roi?: number;
+    holdTime?: number;
+  };
+  score_source: string;
+  score_status: string;
+  consensus_mode: string | null;
+  qualifying_wallets: number | string;
+  created_at: number | string;
+  created_utc?: string;
 }
 
 export interface SniperStatus {

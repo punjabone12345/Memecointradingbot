@@ -44,6 +44,40 @@ export interface DiagScanUpdate {
   passedEntry?: boolean;
 }
 
+export interface DiagTransactionScore {
+  score: number;
+  winRate: number | null;
+  avgRoiPct: number | null;
+  completedTrades: number | null;
+  walletAgeDays: number | null;
+  avgHoldMinutes: number | null;
+  scorePoints: {
+    winRate: number;
+    walletAge: number;
+    completedTrades: number;
+    roi: number;
+    holdTime: number;
+  };
+  scoreSource: string;
+  scoreStatus: string;
+}
+
+export interface DiagTransactionAudit {
+  txSignature: string;
+  mint: string;
+  txType: 'buy' | 'sell';
+  wallet: string;
+  amountUsd: number;
+  txTimestamp: number;
+  detectedAt: number;
+  priceAtDetection: number;
+  decision: string;
+  decisionReason: string;
+  score: DiagTransactionScore;
+  consensusMode?: string;
+  qualifyingWallets?: number;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Write API — all async, all should be called with `void fn().catch(() => {})`
 // ─────────────────────────────────────────────────────────────────────────────
@@ -282,6 +316,47 @@ export async function diagTechError(
   }
 }
 
+/** Persist the complete GMGN-backed decision for one detected transaction. */
+export async function diagTransactionAudited(audit: DiagTransactionAudit): Promise<void> {
+  try {
+    await query(`
+      INSERT INTO diag_transactions (
+        tx_signature, mint, tx_type, wallet, amount_usd, tx_timestamp, detected_at,
+        price_at_detection, decision, decision_reason, wallet_score, win_rate,
+        avg_roi_pct, completed_trades, wallet_age_days, avg_hold_minutes,
+        score_points, score_source, score_status, consensus_mode,
+        qualifying_wallets, created_at
+      ) VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
+        $17::jsonb,$18,$19,$20,$21,$22
+      )
+      ON CONFLICT (tx_signature) DO UPDATE SET
+        decision = EXCLUDED.decision,
+        decision_reason = EXCLUDED.decision_reason,
+        wallet_score = EXCLUDED.wallet_score,
+        win_rate = EXCLUDED.win_rate,
+        avg_roi_pct = EXCLUDED.avg_roi_pct,
+        completed_trades = EXCLUDED.completed_trades,
+        wallet_age_days = EXCLUDED.wallet_age_days,
+        avg_hold_minutes = EXCLUDED.avg_hold_minutes,
+        score_points = EXCLUDED.score_points,
+        score_source = EXCLUDED.score_source,
+        score_status = EXCLUDED.score_status,
+        consensus_mode = EXCLUDED.consensus_mode,
+        qualifying_wallets = EXCLUDED.qualifying_wallets
+    `, [
+      audit.txSignature, audit.mint, audit.txType, audit.wallet, audit.amountUsd,
+      audit.txTimestamp, audit.detectedAt, audit.priceAtDetection, audit.decision,
+      audit.decisionReason, audit.score.score, audit.score.winRate, audit.score.avgRoiPct,
+      audit.score.completedTrades, audit.score.walletAgeDays, audit.score.avgHoldMinutes,
+      JSON.stringify(audit.score.scorePoints), audit.score.scoreSource, audit.score.scoreStatus,
+      audit.consensusMode ?? null, audit.qualifyingWallets ?? 0, Date.now(),
+    ]);
+  } catch (err: any) {
+    logger.debug({ err: err?.message, tx: audit.txSignature }, 'diag: transaction audit write failed (non-fatal)');
+  }
+}
+
 // ── Discovery pipeline lifecycle events ───────────────────────────────────────
 
 /**
@@ -514,6 +589,35 @@ export async function getDiagErrors(opts: { limit?: number; errorType?: string }
     ORDER BY occurred_at DESC
     LIMIT $${p}
   `, params);
+}
+
+export async function getDiagTransactions(opts: {
+  limit?: number;
+  offset?: number;
+  mint?: string;
+  txType?: string;
+  since?: number;
+} = {}): Promise<{ rows: unknown[]; total: number }> {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  let p = 1;
+  if (opts.mint) { conditions.push(`mint = $${p++}`); params.push(opts.mint); }
+  if (opts.txType) { conditions.push(`tx_type = $${p++}`); params.push(opts.txType); }
+  if (opts.since != null) { conditions.push(`created_at >= $${p++}`); params.push(opts.since); }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
+  const offset = Math.max(opts.offset ?? 0, 0);
+  const [rows, count] = await Promise.all([
+    query<unknown>(`
+      SELECT *,
+        to_char(to_timestamp(created_at / 1000) AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_utc
+      FROM diag_transactions ${where}
+      ORDER BY created_at DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `, params),
+    query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM diag_transactions ${where}`, params),
+  ]);
+  return { rows, total: parseInt(count[0]?.count ?? '0', 10) };
 }
 
 export async function getDiagFunnelStats(opts: { since?: number } = {}): Promise<unknown> {

@@ -39,6 +39,15 @@ export interface WalletScoreBreakdown {
   completedTrades: number | null;
   walletAgeDays: number | null;
   avgHoldMinutes: number | null;
+  scorePoints: {
+    winRate: number;
+    walletAge: number;
+    completedTrades: number;
+    roi: number;
+    holdTime: number;
+  };
+  scoreSource: 'gmgn' | 'cache' | 'unavailable' | 'rate_limited';
+  scoreStatus: 'scored' | 'unavailable' | 'rate_limited';
   computedAt: number;
   /** True when this zero score was caused by an active rate-limit ban (not a real score). */
   _skippedDueToBan?: boolean;
@@ -70,7 +79,9 @@ function toNumber(v: unknown): number | null {
 async function computeScore(wallet: string): Promise<WalletScoreBreakdown> {
   const zero: WalletScoreBreakdown = {
     wallet, score: 0, winRate: null, avgRoiPct: null, completedTrades: null,
-    walletAgeDays: null, avgHoldMinutes: null, computedAt: Date.now(),
+    walletAgeDays: null, avgHoldMinutes: null,
+    scorePoints: { winRate: 0, walletAge: 0, completedTrades: 0, roi: 0, holdTime: 0 },
+    scoreSource: 'unavailable', scoreStatus: 'unavailable', computedAt: Date.now(),
   };
 
   if (!isGmgnConfigured()) return zero;
@@ -96,7 +107,13 @@ async function computeScore(wallet: string): Promise<WalletScoreBreakdown> {
     // Use getGmgnBannedUntil() here (includes warmup) for the cache TTL so the
     // retry doesn't happen until the full cooldown has cleared.
     const bannedUntilWithWarmup = getGmgnBannedUntil();
-    return { ...zero, _skippedDueToBan: true, _bannedUntilMs: bannedUntilWithWarmup > 0 ? bannedUntilWithWarmup : bannedUntil };
+    return {
+      ...zero,
+      scoreSource: 'rate_limited',
+      scoreStatus: 'rate_limited',
+      _skippedDueToBan: true,
+      _bannedUntilMs: bannedUntilWithWarmup > 0 ? bannedUntilWithWarmup : bannedUntil,
+    };
   }
 
   // Only call getWalletStats (1 GMGN request per wallet instead of 2).
@@ -151,7 +168,7 @@ async function computeScore(wallet: string): Promise<WalletScoreBreakdown> {
       score,
       winRate:   winRate?.toFixed(2) ?? 'null',
       winPts,
-      ageDays:   walletAgeDays?.toFixed(1) ?? 'null',
+       ageDays:   String(walletAgeDays ?? 'null'),
       agePts,
       trades:    completedTrades ?? 'null',
       tradePts,
@@ -165,6 +182,9 @@ async function computeScore(wallet: string): Promise<WalletScoreBreakdown> {
 
   return {
     wallet, score, winRate, avgRoiPct, completedTrades, walletAgeDays, avgHoldMinutes,
+    scorePoints: { winRate: winPts, walletAge: agePts, completedTrades: tradePts, roi: roiPts, holdTime: holdPts },
+    scoreSource: 'gmgn',
+    scoreStatus: 'scored',
     computedAt: Date.now(),
   };
 }
@@ -186,7 +206,7 @@ export async function getWalletScore(wallet: string): Promise<WalletScoreBreakdo
   if (cached && !cached._skippedDueToBan) {
     const bannedUntil = getGmgnBannedUntil();
     if (bannedUntil > 0) {
-      return cached;
+      return { ...cached, scoreSource: 'cache' };
     }
   }
 
@@ -203,7 +223,7 @@ export async function getWalletScore(wallet: string): Promise<WalletScoreBreakdo
     } else {
       ttl = SCORE_CACHE_TTL_MS;
     }
-    if (Date.now() - cached.computedAt < ttl) return cached;
+    if (Date.now() - cached.computedAt < ttl) return { ...cached, scoreSource: cached.scoreStatus === 'scored' ? 'cache' : cached.scoreSource };
   }
 
   let pending = inFlight.get(wallet);
@@ -217,7 +237,9 @@ export async function getWalletScore(wallet: string): Promise<WalletScoreBreakdo
         logger.warn({ wallet: wallet.slice(0, 12), err: err?.message }, 'Wallet score: compute failed — scoring 0');
         const fallback: WalletScoreBreakdown = cached ?? {
           wallet, score: 0, winRate: null, avgRoiPct: null, completedTrades: null,
-          walletAgeDays: null, avgHoldMinutes: null, computedAt: Date.now(),
+          walletAgeDays: null, avgHoldMinutes: null,
+          scorePoints: { winRate: 0, walletAge: 0, completedTrades: 0, roi: 0, holdTime: 0 },
+          scoreSource: 'unavailable', scoreStatus: 'unavailable', computedAt: Date.now(),
         };
         return fallback;
       })
@@ -228,11 +250,13 @@ export async function getWalletScore(wallet: string): Promise<WalletScoreBreakdo
   // Stale-while-revalidate: if we already have a (stale) score, return it
   // immediately and let the refresh finish in the background — dynamic
   // updates then land on the NEXT lookup for this wallet.
-  if (cached) return cached;
+  if (cached) return { ...cached, scoreSource: cached.scoreStatus === 'scored' ? 'cache' : cached.scoreSource };
 
   return withTimeout(pending, LOOKUP_TIMEOUT_MS, {
     wallet, score: 0, winRate: null, avgRoiPct: null, completedTrades: null,
-    walletAgeDays: null, avgHoldMinutes: null, computedAt: Date.now(),
+    walletAgeDays: null, avgHoldMinutes: null,
+    scorePoints: { winRate: 0, walletAge: 0, completedTrades: 0, roi: 0, holdTime: 0 },
+    scoreSource: 'unavailable', scoreStatus: 'unavailable', computedAt: Date.now(),
   });
 }
 

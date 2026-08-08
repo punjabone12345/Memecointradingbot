@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { SniperStatus, TrackedToken, BuyerActivityLog, PendingSignal } from '../lib/types.js';
+import { SniperStatus, TrackedToken, BuyerActivityLog, PendingSignal, DiagTransaction } from '../lib/types.js';
 import { api } from '../lib/api.js';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -347,7 +347,7 @@ function BuyerActivityRow({ entry }: { entry: BuyerActivityLog }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12, fontWeight: 900, color: C.accent }}>{fmtUsd(entry.amountUsd)}</span>
-          <span style={{ fontSize: 10, color: '#e0e8ff', fontWeight: 700 }}>buy on {entry.symbol}</span>
+           <span style={{ fontSize: 10, color: '#e0e8ff', fontWeight: 700 }}>{entry.txType === 'sell' ? 'sell on' : 'buy on'} {entry.symbol}</span>
           <DexLink mint={entry.mint} />
           {modeLabel && (
             <span style={{ fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 3, background: 'rgba(155,89,255,0.12)', color: '#9b59ff', border: '1px solid rgba(155,89,255,0.3)' }}>{modeLabel}</span>
@@ -362,6 +362,108 @@ function BuyerActivityRow({ entry }: { entry: BuyerActivityLog }) {
           {shortAddr(entry.wallet)} · {timeAgo(entry.detectedAt ?? entry.timestamp)}
         </div>
       </div>
+    </div>
+  );
+}
+
+function ScoreMetric({ label, value, points, max }: { label: string; value: string; points: number; max: number }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '92px 1fr auto', gap: 6, alignItems: 'center', fontSize: 8 }}>
+      <span style={{ color: C.gray }}>{label}</span>
+      <span style={{ color: '#b9c8e4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
+      <span style={{ color: points > 0 ? C.green : C.gray, fontWeight: 800 }}>+{points}/{max}</span>
+    </div>
+  );
+}
+
+function TransactionAuditRow({ tx, expanded, onToggle }: { tx: DiagTransaction; expanded: boolean; onToggle: () => void }) {
+  const score = Number(tx.wallet_score ?? 0);
+  const points = tx.score_points ?? {};
+  const decisionColor = tx.decision === 'ENTERED' ? C.green
+    : tx.decision === 'SELL_OBSERVED' ? C.accent
+    : tx.decision === 'WAITING_CONSENSUS' || tx.decision === 'QUEUED' ? C.yellow
+    : tx.decision === 'GMGN_RATE_LIMITED' ? C.yellow : C.red;
+  const txTime = Number(tx.detected_at || tx.created_at);
+  const solscanTx = `https://solscan.io/tx/${tx.tx_signature}`;
+  const solscanWallet = `https://solscan.io/account/${tx.wallet}`;
+  return (
+    <div style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+      <button onClick={onToggle} style={{ width: '100%', display: 'grid', gridTemplateColumns: '58px 1fr auto', gap: 8, alignItems: 'center', textAlign: 'left', padding: '8px 0', color: '#dce6f8', background: 'transparent', border: 'none', cursor: 'pointer' }}>
+        <span style={{ color: decisionColor, fontSize: 8, fontWeight: 900 }}>{tx.tx_type.toUpperCase()}<br /><span style={{ color: C.gray, fontWeight: 500 }}>{timeAgo(txTime)}</span></span>
+        <span style={{ minWidth: 0 }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ color: '#e0e8ff', fontWeight: 800, fontSize: 10 }}>{tx.mint.slice(0, 6)}…{tx.mint.slice(-4)}</span>
+            <span style={{ color: decisionColor, fontWeight: 900, fontSize: 9 }}>{tx.decision}</span>
+            <span style={{ color: C.gray, fontSize: 8 }}>{tx.decision_reason}</span>
+          </span>
+          <span style={{ display: 'block', marginTop: 2, color: C.gray, fontSize: 8, fontFamily: 'monospace' }}>{tx.wallet.slice(0, 8)}…{tx.wallet.slice(-6)} · {tx.tx_signature.slice(0, 10)}…</span>
+        </span>
+        <span style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+          <span style={{ display: 'block', color: score >= 80 ? C.green : score > 0 ? C.yellow : C.gray, fontSize: 14, fontWeight: 900 }}>{score}</span>
+          <span style={{ color: C.gray, fontSize: 7 }}>GMGN /100</span>
+        </span>
+      </button>
+      {expanded && (
+        <div style={{ padding: '6px 10px 12px', marginBottom: 4, borderRadius: 7, background: 'rgba(0,0,0,0.16)', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <div style={{ ...C.label, marginBottom: 6 }}>Transaction Detail</div>
+            <div style={{ fontSize: 9, color: C.gray, lineHeight: 1.8 }}>
+              <div>Amount: <b style={{ color: '#dce6f8' }}>{fmtUsd(Number(tx.amount_usd ?? 0))}</b></div>
+              <div>Price: <b style={{ color: '#dce6f8' }}>{fmtPrice(Number(tx.price_at_detection ?? 0))}</b></div>
+              <div>Wallet: <a href={solscanWallet} target="_blank" rel="noopener noreferrer" style={{ color: C.accent }}>{tx.wallet}</a></div>
+              <div>Signature: <a href={solscanTx} target="_blank" rel="noopener noreferrer" style={{ color: C.accent }}>{tx.tx_signature}</a></div>
+              <div>Source: <b style={{ color: '#dce6f8' }}>{tx.score_source} · {tx.score_status}</b></div>
+            </div>
+            <div style={{ marginTop: 8, padding: '7px 8px', borderRadius: 5, background: tx.decision === 'ENTERED' ? 'rgba(0,255,136,0.07)' : 'rgba(255,68,102,0.07)', border: `1px solid ${decisionColor}33` }}>
+              <div style={{ ...C.label, color: decisionColor }}>Decision Explanation</div>
+              <div style={{ marginTop: 3, color: '#dce6f8', fontSize: 9, lineHeight: 1.35 }}>{tx.decision_reason}</div>
+            </div>
+          </div>
+          <div>
+            <div style={{ ...C.label, marginBottom: 6 }}>GMGN Score Calculation</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              <ScoreMetric label="Win rate" value={tx.win_rate == null ? 'not available' : `${(Number(tx.win_rate) * 100).toFixed(1)}%`} points={Number(points.winRate ?? 0)} max={30} />
+              <ScoreMetric label="Wallet age" value={tx.wallet_age_days == null ? 'not queried' : `${Number(tx.wallet_age_days).toFixed(1)} days`} points={Number(points.walletAge ?? 0)} max={15} />
+              <ScoreMetric label="Completed trades" value={tx.completed_trades == null ? 'not available' : String(tx.completed_trades)} points={Number(points.completedTrades ?? 0)} max={15} />
+              <ScoreMetric label="Average ROI" value={tx.avg_roi_pct == null ? 'not available' : `${Number(tx.avg_roi_pct).toFixed(1)}%`} points={Number(points.roi ?? 0)} max={25} />
+              <ScoreMetric label="Average hold" value={tx.avg_hold_minutes == null ? 'not available' : `${Number(tx.avg_hold_minutes).toFixed(1)} min`} points={Number(points.holdTime ?? 0)} max={15} />
+            </div>
+            <div style={{ marginTop: 7, color: C.gray, fontSize: 8 }}>Threshold: score ≥80 qualifies; two distinct qualifying wallets within 5 minutes are required for consensus.</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TransactionAuditPanel({ since }: { since?: number }) {
+  const [rows, setRows] = useState<DiagTransaction[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const result = await api.getDiagTransactions({ limit: 100, since });
+        if (!cancelled) { setRows(result.rows); setTotal(result.total); }
+      } catch { /* API may be unavailable while it restarts */ }
+      finally { if (!cancelled) setLoading(false); }
+    };
+    load();
+    const id = setInterval(load, 5_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [since]);
+
+  return (
+    <div style={{ ...C.card, marginBottom: 16 }}>
+      <div style={{ ...C.label, marginBottom: 2 }}>🧾 TRANSACTION AUDIT — GMGN DECISIONS</div>
+      <div style={{ fontSize: 9, color: '#2a3a50', marginBottom: 8 }}>Every detected buy and sell is scored through GMGN. Expand a row for wallet, signature, rejection explanation, and point-by-point score calculation.</div>
+      {loading && rows.length === 0 ? <div style={{ padding: 16, textAlign: 'center', color: C.gray, fontSize: 10 }}>Loading transaction audit…</div>
+        : rows.length === 0 ? <div style={{ padding: 16, textAlign: 'center', color: C.gray, fontSize: 10 }}>No transactions audited yet</div>
+        : <div>{rows.map(tx => <TransactionAuditRow key={tx.tx_signature} tx={tx} expanded={expanded === tx.tx_signature} onToggle={() => setExpanded(expanded === tx.tx_signature ? null : tx.tx_signature)} />)}</div>}
+      {total > rows.length && <div style={{ paddingTop: 7, color: C.gray, fontSize: 8, textAlign: 'center' }}>Showing latest {rows.length} of {total} audited transactions</div>}
     </div>
   );
 }
@@ -648,6 +750,8 @@ export default function DiscoverPage({ sniperStatus: wsProp, wsConnected = false
           buyLogs.map((log: BuyerActivityLog, i: number) => <BuyerActivityRow key={i} entry={log} />)
         )}
       </div>
+
+      <TransactionAuditPanel since={status?.serverStartMs} />
 
       {/* ── Migration tracker feed ── */}
       <MigrationFeed />
