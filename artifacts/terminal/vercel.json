@@ -1,0 +1,11 @@
+{
+  "buildCommand": "cd ../.. && pnpm install && pnpm --filter @workspace/terminal run build",
+  "outputDirectory": "dist/public",
+  "framework": null,
+  "env": {
+    "VITE_API_URL": "https://memecointrading-thpe.onrender.com"
+  },
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

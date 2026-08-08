@@ -1,0 +1,23 @@
+[
+  {
+    "positionId": "c26b296a-a6dc-4a8d-80b6-f53d9aede16e",
+    "symbol": "WIF",
+    "tokenName": "catwifhat",
+    "pairAddress": "7in6a1FGRNbCZPd1iik7eHdauEUEvfEg51YZ54PFL8jB",
+    "contractAddress": "29oyGmjoZgPjLXzyd4tx7865pVUibKQSzz9sFGH8LGES",
+    "imageUrl": "",
+    "entryPrice": 0.0001238,
+    "sizeSol": 0.5,
+    "slPercent": 18,
+    "tpPercent": 200,
+    "slPrice": 0.00010151600000000001,
+    "tpPrice": 0.00037140000000000003,
+    "entryMarketCap": 122285,
+    "tpMarketCap": 366855,
+    "slMarketCap": 100273.70000000001,
+    "aiScore": 92,
+    "confidence": 100,
+    "openedAt": "2026-06-05T01:09:18.526Z",
+    "status": "open"
+  }
+]

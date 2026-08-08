@@ -1,0 +1,86 @@
+Let me check the sniper config defaults and the exact P&L formula:
+
+Let me check the actual database data for that closed position to verify what's stored:
+
+Let me trace the price source to find the calculation bug:
+
+The database is empty (positions live in-memory only — they're lost on restart). Let me work through the exact math and identify the bug by tracing through the actual number chain:
+
+What the profit SHOULD be (exact math)
+Position: 0.1 SOL · Entry: 20k mcap · Exit (trailing SL triggered): 367k mcap
+
+Stage	Fraction	Price multiple	Profit formula	Profit
+TP1 hit	40% of original = 0.04 SOL	+150% = 2.5×	0.04 × 1.5	+0.060 SOL
+TP2 hit	40% of original = 0.04 SOL	+400% = 5×	0.04 × 4.0	+0.160 SOL
+Runner close	20% remaining = 0.02 SOL	367k/20k = 18.35×	0.02 × 17.35	+0.347 SOL
+Total				= 0.567 SOL
+So correct profit = 0.567 SOL, not 2.29 SOL.
+
+Why 2.29 SOL is showing — working it backwards
+For 2.29 SOL to be realized, the close portion alone must have contributed:
+
+2.29 − 0.06 − 0.16 = 2.07 SOL from the runner close
+For the runner to produce 2.07 SOL at 18.35×:
+
+closeSize = 2.07 / 17.35 = 0.1193 SOL
+But closeSize = sizeSol × remainingFraction = 0.1 × 0.2 = 0.02 SOL only.
+
+0.1193 / 0.02 = ~6× too large. This exactly matches the bug: the runner close is being calculated on the wrong remaining fraction — it's using nearly the full position size instead of 20%.
+
+The most likely cause: remainingFraction is not being persisted correctly to the database, and on the next server start it's reloaded as 1.0. Then closePosition fires with remainingFraction ≈ 1.0 instead of 0.2.
+
+Looking at the persistPosition code — it does save remaining_fraction, but the DB currently has zero rows in sniper_positions. This means every server restart resets all positions to in-memory defaults, and if positions are re-loaded from the API at startup they re-initialize with wrong fractions. Let me fix this properly:
+
+Let me check the DB schema to understand why positions aren't persisting:
+
+Let me check the DB schema definition and why positions aren't persisting:
+
+Let me read the key calculation functions in full to find the exact bug:
+
+Let me look at how positions are serialized for the API and find the actual bug:
+
+Let me see the full getStatus function:
+
+Let me find the actual getStatus function:
+
+Now I can see the full picture. Let me check what ID is generated for positions and trace the persistence failure:
+
+Let me read the actual position card render code to find the display source:
+
+Found it — I can see pos.currentPrice and pos.remainingFraction are both shown correctly in the card (0.000476 and 20%). Let me compute the implied realizedPnlSol from the display and find the true bug:
+
+Let me read the full checkPositionPrice function to find the race condition:
+
+Now I have the full picture. Let me trace the exact bug.
+
+The calculation reverse-engineered:
+
+From the screenshot, NEEDLESS showed pos.currentPrice = $0.000476, pos.entryPrice = $2.011e-5, pos.remainingFraction = 0.2, pos.totalPnlSol = 2.4053 SOL.
+
+With correct formula:
+
+unrealizedPnlSol = (0.000476 / 0.00002011 - 1) × 0.1 × 0.2 = 0.453 SOL
+→ realizedPnlSol implied = 2.4053 - 0.453 = 1.952 SOL (should be 0.22!)
+This means partialClose was called extra times — the checkPositionPrice async function has a concurrency gap at await executeTP1Atomic where a second price check tick can slip in and re-execute closes.
+
+The correct profit for 0.1 SOL, 20k→367k:
+
+Event	Action	Price mult	Profit
+TP1 hit	Sell 40% = 0.04 SOL	2.5×	+0.060 SOL
+TP2 hit	Sell 40% = 0.04 SOL	5.0×	+0.160 SOL
+Runner close	Sell 20% = 0.02 SOL	18.35×	+0.347 SOL
+Total			= 0.567 SOL
+The 2.29 SOL is inflated. Let me fix the concurrency bug and add a P&L breakdown:
+
+Now I have the full picture. The bug: await executeTP1Atomic at line 1103 creates an async gap. If the setInterval fires again during that gap, a second checkPositionPrice call runs for the same mint and re-executes closes. I'll fix this with a concurrency guard, add TP breakdown tracking, and improve the display.
+
+Now I'll implement all three fixes simultaneously:
+
+Concurrency guard on checkPositionPrice (prevents duplicate TP executions during the await gap)
+P&L breakdown fields (tp1RealizedSol, tp2RealizedSol, runnerRealizedSol)
+Frontend breakdown display on position cards
+Now let me apply all remaining fixes in parallel:
+
+You've reached your daily free quota limit. It will reset at 12:00 AM UTC.
+
+You're out of credits.

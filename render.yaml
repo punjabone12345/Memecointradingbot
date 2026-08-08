@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: apex-meme-trader-api
+    runtime: node
+    region: oregon
+    plan: free
+    buildCommand: pnpm install && pnpm --filter @workspace/api-server run build && pnpm --filter @workspace/terminal run build
+    startCommand: pnpm --filter @workspace/api-server run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 8080
+      - key: DATABASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GMGN_API_KEY
+        sync: false
+      - key: HELIUS_API_KEY
+        sync: false
+      - key: SOLANA_PRIVATE_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
