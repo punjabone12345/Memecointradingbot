@@ -31,14 +31,14 @@ import { logger } from './logger.js';
  * safety margin (0.67 req/min) that survives realistic timing variance.
  * Override via GMGN_INTERVAL_MS env var.
  */
-const INTERVAL_MS = Number(process.env.GMGN_INTERVAL_MS) || 90_000;
+const INTERVAL_MS = Number(process.env.GMGN_INTERVAL_MS) || 1_500;
 
 /**
  * After a hard ban clears, hold all requests for this extra warmup period
  * to prevent the queued-wallet thundering herd from immediately re-triggering
  * another ban as soon as the first post-ban request succeeds.
  */
-const POST_BAN_WARMUP_MS = 60_000;
+const POST_BAN_WARMUP_MS = 5_000;
 
 // ── Per-key ban state ─────────────────────────────────────────────────────────
 

@@ -22,7 +22,7 @@ import { logger } from '../lib/logger.js';
 const CHAIN = 'sol';
 const SCORE_CACHE_TTL_MS     = 30 * 60_000; // 30 min — smart wallet quality is stable over short windows; longer TTL slashes GMGN request volume
 const BAN_RETRY_MIN_TTL_MS   = 60_000;      // minimum retry window for ban-skipped entries (1 min floor)
-const LOOKUP_TIMEOUT_MS      = 3_500;        // hard cap so a slow/hanging GMGN call never blocks the entry pipeline for long
+const LOOKUP_TIMEOUT_MS      = 15_000;       // allow queued wallet score lookups to resolve cleanly
 
 // ── Ban log deduplication ─────────────────────────────────────────────────────
 // Log the "ban active" message at most once per ban period (not once per wallet).
