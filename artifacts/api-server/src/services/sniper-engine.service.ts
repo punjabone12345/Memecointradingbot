@@ -266,6 +266,28 @@ function connectSniperWs(): void {
 
 // ── In-memory state ───────────────────────────────────────────────────────────
 
+interface PendingConsensusSignal {
+  mint: string;
+  name: string;
+  symbol: string;
+  qualifyingWallets: string[];
+  consensusTimestamp: number;
+  sizePct: number;
+  triggerAmountUsd: number;
+  priceAtDetection: number;
+  buyerWallet: string;
+  buyDetectedTimestamp: number;
+  tpTier: 1 | 2 | 3;
+  entryMode: 'solo' | 'consensus';
+  entryScore: number;
+  qualifyingWalletsCount: number;
+  scoreBreakdown: WalletScoreBreakdown;
+  txSig: string;
+}
+
+const PENDING_CONSENSUS_TTL_MS = 20 * 60_000; // 20 minutes
+const pendingConsensusSignals = new Map<string, PendingConsensusSignal>();
+
 const pendingGraduations = new Map<string, PendingGraduation>();
 const trackedTokens  = new Map<string, TrackedToken>();
 const openPositions = new Map<string, SniperPosition>();
@@ -1700,9 +1722,39 @@ async function handleVolumeUpdate(
   // 1. Minimum pool liquidity: $25,000
   const liqAtSignal = tok.liquidity ?? 0;
   if (liqAtSignal < 25_000) {
-    entry.skipReason = `Low liquidity ${liqAtSignal.toFixed(0)} < $25,000 min`;
-    void diagTokenRejected(mint, `Liquidity: ${liqAtSignal.toFixed(0)} < $25,000 min`).catch(() => {});
-    persistAudit('REJECTED', entry.skipReason, result.mode, result.qualifyingWallets.length);
+    if (pendingConsensusSignals.has(mint)) {
+      entry.skipReason = `Consensus signal already pending for this token (liq: $${liqAtSignal.toFixed(0)} < $25,000)`;
+      persistAudit('PENDING_CONSENSUS_EXISTS', entry.skipReason, result.mode, result.qualifyingWallets.length);
+      buyLog.unshift(entry); if (buyLog.length > MAX_BUY_LOG) buyLog.pop();
+      broadcastSniperStatus(); return;
+    }
+
+    logger.info(
+      { mint: mint.slice(0, 12), symbol: tok.symbol, liquidity: liqAtSignal.toFixed(0), wallets: result.qualifyingWallets.map(w => w.slice(0, 12)) },
+      'PENDING CONSENSUS: liquidity below $25k threshold, monitoring for 20m',
+    );
+
+    pendingConsensusSignals.set(mint, {
+      mint,
+      name: tok.name,
+      symbol: tok.symbol,
+      qualifyingWallets: [...result.qualifyingWallets],
+      consensusTimestamp: Date.now(),
+      sizePct: result.sizePct,
+      triggerAmountUsd: txUsd,
+      priceAtDetection,
+      buyerWallet: wallet,
+      buyDetectedTimestamp: txTimestamp,
+      tpTier: result.tpTier,
+      entryMode: result.mode as 'solo' | 'consensus',
+      entryScore: result.score,
+      qualifyingWalletsCount: result.qualifyingWallets.length,
+      scoreBreakdown: result.scoreBreakdown,
+      txSig,
+    });
+
+    entry.skipReason = `PENDING CONSENSUS: low liquidity $${liqAtSignal.toFixed(0)} < $25,000 min (monitoring for 20m)`;
+    persistAudit('PENDING_CONSENSUS', entry.skipReason, result.mode, result.qualifyingWallets.length);
     buyLog.unshift(entry); if (buyLog.length > MAX_BUY_LOG) buyLog.pop();
     broadcastSniperStatus(); return;
   }
@@ -2556,8 +2608,8 @@ async function validateOrPrune(mint: string, activatedAt: number): Promise<void>
 // so the invariant "never remove tracking state for an active position" is enforced
 // centrally and not just at each call site.
 function pruneToken(mint: string): void {
-  // Final safety: never prune if a position is already open or entry has started
-  if (openPositions.has(mint) || trackedTokens.get(mint)?.entryTriggered) return;
+  // Final safety: never prune if a position is already open, entry has started, or consensus is pending
+  if (openPositions.has(mint) || trackedTokens.get(mint)?.entryTriggered || pendingConsensusSignals.has(mint)) return;
   trackedTokens.delete(mint);
   seenTxns.delete(mint);
   mintCheckpointed.delete(mint);
@@ -2819,6 +2871,188 @@ async function refreshTrackedTokensMarketData(): Promise<void> {
       await new Promise(r => setTimeout(r, MARKET_BATCH_PAUSE_MS));
     }
   }
+
+  try {
+    await processPendingConsensusSignals();
+  } catch (err: any) {
+    logger.warn({ err: err?.message }, 'Sniper engine: error processing pending consensus signals');
+  }
+}
+
+async function verifyWalletsStillHolding(mint: string, wallets: string[], consensusTimestamp: number): Promise<boolean> {
+  const tok = trackedTokens.get(mint);
+  if (tok) {
+    for (const act of tok.buyerActivity) {
+      if (act.txType === 'sell' && act.timestamp >= consensusTimestamp && wallets.includes(act.wallet)) {
+        logger.info(
+          { mint: mint.slice(0, 12), wallet: act.wallet.slice(0, 12) },
+          'WALLET VALIDATION: failed — wallet sold token in recorded activity',
+        );
+        return false;
+      }
+    }
+  }
+
+  const conn = getConn();
+  for (const wallet of wallets) {
+    try {
+      const parsed = await withHeliusLimit(() =>
+        conn.getParsedTokenAccountsByOwner(new PublicKey(wallet), { mint: new PublicKey(mint) }),
+      );
+      if (!parsed || !parsed.value || parsed.value.length === 0) {
+        logger.info(
+          { mint: mint.slice(0, 12), wallet: wallet.slice(0, 12) },
+          'WALLET VALIDATION: failed — no token account found for wallet',
+        );
+        return false;
+      }
+      const hasBalance = parsed.value.some(acc => {
+        const info = acc.account?.data?.parsed?.info;
+        const uiAmt = info?.tokenAmount?.uiAmount;
+        const rawAmt = info?.tokenAmount?.amount;
+        return (uiAmt != null && uiAmt > 0) || (rawAmt != null && BigInt(rawAmt) > 0n);
+      });
+      if (!hasBalance) {
+        logger.info(
+          { mint: mint.slice(0, 12), wallet: wallet.slice(0, 12) },
+          'WALLET VALIDATION: failed — wallet token balance is 0',
+        );
+        return false;
+      }
+    } catch (err: any) {
+      logger.warn(
+        { mint: mint.slice(0, 12), wallet: wallet.slice(0, 12), err: err?.message },
+        'WALLET VALIDATION: RPC lookup error for wallet balance check — failing safe',
+      );
+      return false;
+    }
+  }
+  return true;
+}
+
+async function processPendingConsensusSignals(): Promise<void> {
+  if (pendingConsensusSignals.size === 0) return;
+  const now = Date.now();
+
+  for (const [mint, pending] of Array.from(pendingConsensusSignals.entries())) {
+    const elapsedMs = now - pending.consensusTimestamp;
+    if (elapsedMs > PENDING_CONSENSUS_TTL_MS) {
+      logger.info(
+        { mint: mint.slice(0, 12), symbol: pending.symbol, elapsedMin: (elapsedMs / 60_000).toFixed(1) },
+        'CONSENSUS EXPIRED: pending consensus signal expired after 20m',
+      );
+      pendingConsensusSignals.delete(mint);
+      continue;
+    }
+
+    const tok = trackedTokens.get(mint);
+    let currentLiq = tok?.liquidity ?? 0;
+
+    if (currentLiq < 25_000 && tok?.poolAddress) {
+      try {
+        await fetchSolPrice();
+        const onChainLiq = await fetchOnChainLiqUsd(tok.poolAddress, cachedSolPrice);
+        if (onChainLiq > 0) {
+          currentLiq = onChainLiq;
+          if (tok) tok.liquidity = onChainLiq;
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    if (currentLiq < 25_000) continue;
+
+    logger.info(
+      { mint: mint.slice(0, 12), symbol: pending.symbol, liquidity: currentLiq.toFixed(0) },
+      'LIQUIDITY REACHED: liquidity reached $25k threshold',
+    );
+
+    logger.info(
+      { mint: mint.slice(0, 12), symbol: pending.symbol, wallets: pending.qualifyingWallets.map(w => w.slice(0, 12)) },
+      'WALLET VALIDATION: checking if qualifying wallets are still holding',
+    );
+
+    const stillHolding = await verifyWalletsStillHolding(mint, pending.qualifyingWallets, pending.consensusTimestamp);
+    if (!stillHolding) {
+      logger.info(
+        { mint: mint.slice(0, 12), symbol: pending.symbol },
+        'WALLET VALIDATION: failed — qualifying wallet no longer holding, cancelling pending signal',
+      );
+      pendingConsensusSignals.delete(mint);
+      continue;
+    }
+
+    logger.info(
+      { mint: mint.slice(0, 12), symbol: pending.symbol },
+      'WALLET VALIDATION: passed — all qualifying wallets are still holding',
+    );
+
+    if (openPositions.has(mint) || tok?.entryTriggered || entryLocks.has(mint) || everTradedMints.has(mint) || slippageSkippedMints.has(mint)) {
+      logger.info(
+        { mint: mint.slice(0, 12), symbol: pending.symbol },
+        'Deferred entry skipped: token already traded or entry in progress',
+      );
+      pendingConsensusSignals.delete(mint);
+      continue;
+    }
+
+    const poolBornMs = Math.min(
+      tok?.migrationTime ?? Infinity,
+      tok?.pairCreatedAt && tok.pairCreatedAt > 0 ? tok.pairCreatedAt : Infinity,
+    );
+    const ageMinutes = (Date.now() - poolBornMs) / 60_000;
+    if (ageMinutes < 10) {
+      logger.info(
+        { mint: mint.slice(0, 12), symbol: pending.symbol, ageMin: ageMinutes.toFixed(1) },
+        'Deferred entry waiting: token too new (< 10 min age)',
+      );
+      continue;
+    }
+
+    const freezable = await isMintFreezable(mint);
+    if (freezable) {
+      logger.info(
+        { mint: mint.slice(0, 12), symbol: pending.symbol },
+        'Deferred entry skipped: token is freezable',
+      );
+      pendingConsensusSignals.delete(mint);
+      continue;
+    }
+
+    const currentPrice = tok?.price ?? pending.priceAtDetection;
+    if (currentPrice > 0 && currentPrice >= 0.001) {
+      logger.info(
+        { mint: mint.slice(0, 12), symbol: pending.symbol, price: currentPrice },
+        'Deferred entry skipped: price >= $0.001 filter',
+      );
+      pendingConsensusSignals.delete(mint);
+      continue;
+    }
+
+    logger.info(
+      { mint: mint.slice(0, 12), symbol: pending.symbol },
+      'DEFERRED ENTRY: executing deferred consensus trade',
+    );
+
+    let maxSlippageForQueue = 20;
+    try { maxSlippageForQueue = (await getSettings()).sniperSlippagePct ?? 20; } catch {}
+
+    if (openPositions.size >= MAX_POSITIONS) {
+      enqueueSignal(
+        mint, pending.name, pending.symbol, pending.sizePct, pending.triggerAmountUsd,
+        currentPrice, pending.buyerWallet, pending.buyDetectedTimestamp, pending.tpTier,
+        pending.entryMode, pending.entryScore, pending.qualifyingWalletsCount, maxSlippageForQueue,
+        pending.qualifyingWallets,
+      );
+    } else {
+      await enterSniperPosition(
+        mint, pending.name, pending.symbol, pending.sizePct, pending.triggerAmountUsd,
+        currentPrice, pending.buyerWallet, pending.buyDetectedTimestamp, pending.tpTier,
+        pending.entryMode, pending.entryScore, pending.qualifyingWalletsCount, undefined, pending.qualifyingWallets,
+      );
+    }
+
+    pendingConsensusSignals.delete(mint);
+  }
 }
 
 // Non-overlapping market refresh: waits for each run to finish before scheduling the next
@@ -3008,6 +3242,7 @@ export function resetSniperState(): void {
   seenTxns.clear();
   mintCheckpointed.clear();
   resetConsensusState();
+  pendingConsensusSignals.clear();
   // Only cleared here because this is invoked by the explicit "reset all data"
   // admin action (which also wipes the DB tables) — a real fresh start.
   // Neither set is cleared as a side effect of normal trading.
