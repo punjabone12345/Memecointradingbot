@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://memecointradingbot-cf2m.onrender.com/api/:api*"
+      "destination": "https://memecointradingbot-frce.onrender.com/api/:api*"
     }
   ]
 }
